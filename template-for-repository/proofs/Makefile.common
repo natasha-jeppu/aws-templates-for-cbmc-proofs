@@ -258,6 +258,8 @@ DO_AND_LOG_COMMAND = $(1) $(2) 2>&1 | tee $(3); exit $${PIPESTATUS[0]}
 # assertion violation.	Continue the build so we can output the trace.
 DO_AND_LOG_IGNORING_ERROR_10 =	$(1) $(2) 2>&1 | tee $(3); if [ $${PIPESTATUS[0]} -ne 10 ]; then exit $${PIPESTATUS[0]}; fi
 
+DO_AND_LOG_IGNORING_ERROR_20 =	$(1); if [ $${PIPESTATUS[0]} -ne 20 ]; then exit $${PIPESTATUS[0]}; fi
+
 #1: flags, 2: source, 3: target
 DO_GOTO_ANALYZER = $(call DO_AND_LOG_COMMAND,$(GOTO_ANALYZER),$(CBMC_VERBOSITY) $(1) $(2) $(3), $(call LOG_FROM_ENTRY,$(3)))
 
@@ -368,10 +370,10 @@ arpa: $(ARPA_BLDDIR)
 # Targets to run the analysis commands
 
 $(LOGDIR)/result.txt: $(HARNESS_GOTO).goto
-	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --trace,$<,$@)
+	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --write-solver-stats-to $(LOGDIR)/clause.json --trace,$<,$@)
 
 $(LOGDIR)/result.xml: $(HARNESS_GOTO).goto
-	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --trace --xml-ui,$<,$@)
+	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --write-solver-stats-to $(LOGDIR)/clause.json --trace --xml-ui,$<,$@)
 
 $(LOGDIR)/property.xml: $(HARNESS_GOTO).goto
 	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --show-properties --xml-ui,$<,$@)
@@ -379,13 +381,32 @@ $(LOGDIR)/property.xml: $(HARNESS_GOTO).goto
 $(LOGDIR)/coverage.xml: $(HARNESS_GOTO).goto
 	$(call DO_CBMC,$(CBMCFLAGS) $(COVERFLAGS) --cover location --xml-ui,$<,$@)
 
+$(LOGDIR)/byteop.json: $(HARNESS_GOTO).goto
+	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --show-byte-ops --json-ui,$<,$@)
+
+$(LOGDIR)/dimacs.cnf: $(HARNESS_GOTO).goto
+	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --dimacs --outfile $(LOGDIR)/dimacs.cnf,$<,$@)
+
+$(LOGDIR)/core: $(LOGDIR)/dimacs.cnf
+	$(call DO_AND_LOG_IGNORING_ERROR_20,kissat $(LOGDIR)/dimacs.cnf $(LOGDIR)/proof > $(LOGDIR)/kissat.txt)
+	drat-trim $(LOGDIR)/dimacs.cnf $(LOGDIR)/proof -c $(LOGDIR)/core
+
+$(LOGDIR)/alias.json: $(HARNESS_GOTO).goto
+	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --show-points-to-sets --json-ui,$<,$@)
+
+$(LOGDIR)/memop.json: $(HARNESS_GOTO).goto
+	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --show-goto-functions --json-ui,$<,$@)
+
+$(LOGDIR)/array.json: $(HARNESS_GOTO).goto
+	$(call DO_CBMC,$(CBMCFLAGS) $(CHECKFLAGS) --unwinding-assertions --show-array-constraints --json-ui,$<,$@)
+
 result: $(LOGDIR)/result.txt
 
 property: $(LOGDIR)/property.xml
 
 coverage: $(LOGDIR)/coverage.xml
 
-report: $(LOGDIR)/result.txt $(LOGDIR)/property.xml $(LOGDIR)/coverage.xml
+report: $(LOGDIR)/result.txt $(LOGDIR)/property.xml $(LOGDIR)/coverage.xml $(LOGDIR)/byteop.json $(LOGDIR)/core $(LOGDIR)/alias.json $(LOGDIR)/memop.json $(LOGDIR)/array.json
 	$(VIEWER) \
 	--result $(LOGDIR)/result.txt \
 	--block $(LOGDIR)/coverage.xml \
@@ -393,6 +414,11 @@ report: $(LOGDIR)/result.txt $(LOGDIR)/property.xml $(LOGDIR)/coverage.xml
 	--srcdir $(SRCDIR) \
 	--goto $(HARNESS_GOTO).goto \
 	--htmldir html \
+	--alias $(LOGDIR)/alias.json \
+	--array $(LOGDIR)/array.json \
+	--byteop $(LOGDIR)/byteop.json \
+    --clause $(LOGDIR)/clause.json \
+    --memop $(LOGDIR)/memop.json
 
 # Caution: run make-source before running property and coverage checking
 # The current make-source script removes the goto binary
@@ -405,7 +431,7 @@ $(LOGDIR)/source.json:
 # Omit logs/source.json from report generation until make-sources
 # works correctly with Makefiles that invoke the compiler with
 # mutliple source files at once.
-report2: $(LOGDIR)/result.xml $(LOGDIR)/property.xml $(LOGDIR)/coverage.xml
+report2: $(LOGDIR)/result.xml $(LOGDIR)/property.xml $(LOGDIR)/coverage.xml $(LOGDIR)/byteop.json $(LOGDIR)/core $(LOGDIR)/alias.json $(LOGDIR)/memop.json $(LOGDIR)/array.json
 	$(VIEWER2) \
 	--result $(LOGDIR)/result.xml \
 	--coverage $(LOGDIR)/coverage.xml \
@@ -413,6 +439,11 @@ report2: $(LOGDIR)/result.xml $(LOGDIR)/property.xml $(LOGDIR)/coverage.xml
 	--srcdir $(SRCDIR) \
 	--goto $(HARNESS_GOTO).goto \
 	--reportdir report \
+	--alias $(LOGDIR)/alias.json \
+	--array $(LOGDIR)/array.json \
+	--byteop $(LOGDIR)/byteop.json \
+    --clause $(LOGDIR)/clause.json \
+    --memop $(LOGDIR)/memop.json
 
 ################################################################
 # Targets to clean up after ourselves
